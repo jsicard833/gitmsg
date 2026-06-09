@@ -12,7 +12,7 @@
 ## Installation from source
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/jsicard833/gitmsg.git
 cd gitmsg
 cargo build --release
 ```
@@ -75,6 +75,8 @@ Interactive mode with three suggestions and a selection prompt:
 ```bash
 gitmsg -i
 ```
+
+After you choose a suggestion, `gitmsg` will commit it immediately.
 
 You’ll see output like this:
 

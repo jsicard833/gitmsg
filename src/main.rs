@@ -19,6 +19,7 @@ async fn run() -> Result<()> {
     let cli = cli::Cli::parse();
     let config = ai::AiConfig::from_env()?;
     let diff = git::staged_diff()?;
+    let should_commit = cli.commit || cli.interactive;
 
     if cli.verbose {
         eprintln!(
@@ -37,7 +38,7 @@ async fn run() -> Result<()> {
 
     println!("{message}");
 
-    if cli.commit {
+    if should_commit {
         git::commit(&message)?;
         if cli.verbose {
             eprintln!("git commit completed");
