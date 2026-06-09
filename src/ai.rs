@@ -112,25 +112,97 @@ pub async fn suggest_commit_messages(
         eprintln!("ai model: {}", config.model);
     }
 
+    let mut suggestions = Vec::with_capacity(count);
+    let mut attempts = 0;
+    let max_attempts = count.saturating_mul(3).max(3);
+
+    while suggestions.len() < count && attempts < max_attempts {
+        attempts += 1;
+
+        let candidate = request_commit_suggestion(
+            &client,
+            &endpoint,
+            config,
+            diff,
+            &suggestions,
+            verbose,
+        )
+        .await?;
+
+        if candidate.is_empty() {
+            continue;
+        }
+
+        if suggestions.contains(&candidate) {
+            continue;
+        }
+
+        suggestions.push(candidate);
+    }
+
+    if suggestions.is_empty() {
+        bail!("the AI API returned no usable commit message suggestions");
+    }
+
+    if suggestions.len() < count {
+        bail!(
+            "the AI API returned only {} suggestion(s); expected {}",
+            suggestions.len(),
+            count
+        );
+    }
+
+    Ok(suggestions)
+}
+
+async fn request_commit_suggestion(
+    client: &reqwest::Client,
+    endpoint: &str,
+    config: &AiConfig,
+    diff: &str,
+    existing_suggestions: &[String],
+    verbose: bool,
+) -> Result<String> {
+    let system_prompt = if existing_suggestions.is_empty() {
+        SYSTEM_PROMPT.to_owned()
+    } else {
+        format!(
+            "Generate one distinct concise Conventional Commit message. Use the format type(scope): description. Keep it under about 72 characters. Return only the commit message, with no explanation and no markdown. Avoid repeating these previous suggestions: {}",
+            existing_suggestions.join(" | ")
+        )
+    };
+
+    let user_prompt = if existing_suggestions.is_empty() {
+        format!("Staged git diff:\n\n{diff}")
+    } else {
+        format!(
+            "Staged git diff:\n\n{diff}\n\nPrevious suggestions to avoid repeating:\n{}",
+            existing_suggestions
+                .iter()
+                .enumerate()
+                .map(|(index, suggestion)| format!("{}. {}", index + 1, suggestion))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    };
+
     let payload = json!({
         "model": config.model,
         "messages": [
             {
                 "role": "system",
-                "content": SYSTEM_PROMPT
+                "content": system_prompt
             },
             {
                 "role": "user",
-                "content": format!(
-                    "Staged git diff:\n\n{diff}\n\nGenerate exactly {count} distinct Conventional Commit suggestions. Return one suggestion per line with no numbering, no markdown, and no explanation."
-                )
+                "content": user_prompt
             }
         ],
         "temperature": 0.2
     });
 
     let response = client
-        .post(&endpoint)
+        .post(endpoint)
         .bearer_auth(&config.api_key)
         .json(&payload)
         .send()
@@ -159,61 +231,59 @@ pub async fn suggest_commit_messages(
         .and_then(|message| message.content.as_deref())
         .context("AI API response did not include a commit message")?;
 
-    let suggestions = message
-        .lines()
-        .map(clean_ai_line)
-        .filter(|line| !line.is_empty())
-        .map(|line| {
-            line.trim_matches(|ch| ch == '"' || ch == '\'')
-                .trim()
-                .to_owned()
-        })
-        .filter(|line| !line.is_empty())
-        .take(count)
-        .collect::<Vec<_>>();
-
-    if suggestions.is_empty() {
-        bail!("the AI API returned no usable commit message suggestions");
-    }
-
-    if suggestions.len() < count {
-        bail!(
-            "the AI API returned only {} suggestion(s); expected {}",
-            suggestions.len(),
-            count
-        );
-    }
-
-    Ok(suggestions)
+    Ok(clean_commit_candidate(message))
 }
 
-fn clean_ai_line(line: &str) -> String {
+fn clean_commit_candidate(candidate: &str) -> String {
+    let trimmed = candidate.trim();
+
+    if let Some(stripped) = strip_numbering(trimmed) {
+        return stripped;
+    }
+
+    trimmed
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(strip_quotes)
+        .unwrap_or_default()
+}
+
+fn strip_numbering(line: &str) -> Option<String> {
     let trimmed = line.trim();
+
     if let Some(stripped) = trimmed
         .strip_prefix("- ")
         .or_else(|| trimmed.strip_prefix("* "))
     {
-        return stripped.to_owned();
+        return Some(strip_quotes(stripped));
     }
 
-    let mut marker_end = 0;
     for (index, character) in trimmed.char_indices() {
         if character.is_ascii_digit() {
-            marker_end = index + character.len_utf8();
             continue;
         }
 
         if matches!(character, '.' | ')') {
             let rest = trimmed[index + character.len_utf8()..].trim_start();
             if !rest.is_empty() {
-                return rest.to_owned();
+                return Some(strip_quotes(rest));
             }
         }
 
         break;
     }
 
-    trimmed[marker_end..].trim_start().to_owned()
+    None
+}
+
+fn strip_quotes(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim()
+        .to_owned()
 }
 
 fn detect_provider<F>(get_env: &mut F) -> Result<Provider>
