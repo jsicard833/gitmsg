@@ -70,6 +70,24 @@ Print debug details while running:
 gitmsg --verbose
 ```
 
+Interactive mode with three suggestions and a selection prompt:
+
+```bash
+gitmsg -i
+```
+
+You’ll see output like this:
+
+```text
+1. feat(vector): add iterator support
+2. feat(vector): implement begin/end methods
+3. refactor(vector): improve iterator handling
+
+Select [1]:
+
+Press Enter to accept the first suggestion.
+```
+
 ## Example output
 
 ```text
