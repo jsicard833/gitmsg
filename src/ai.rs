@@ -119,15 +119,9 @@ pub async fn suggest_commit_messages(
     while suggestions.len() < count && attempts < max_attempts {
         attempts += 1;
 
-        let candidate = request_commit_suggestion(
-            &client,
-            &endpoint,
-            config,
-            diff,
-            &suggestions,
-            verbose,
-        )
-        .await?;
+        let candidate =
+            request_commit_suggestion(&client, &endpoint, config, diff, &suggestions, verbose)
+                .await?;
 
         if candidate.is_empty() {
             continue;
